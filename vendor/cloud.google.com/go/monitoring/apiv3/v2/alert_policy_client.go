@@ -1,4 +1,4 @@
-// Copyright 2023 Google LLC
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/url"
 	"time"
@@ -48,10 +49,13 @@ type AlertPolicyCallOptions struct {
 func defaultAlertPolicyGRPCClientOptions() []option.ClientOption {
 	return []option.ClientOption{
 		internaloption.WithDefaultEndpoint("monitoring.googleapis.com:443"),
+		internaloption.WithDefaultEndpointTemplate("monitoring.UNIVERSE_DOMAIN:443"),
 		internaloption.WithDefaultMTLSEndpoint("monitoring.mtls.googleapis.com:443"),
+		internaloption.WithDefaultUniverseDomain("googleapis.com"),
 		internaloption.WithDefaultAudience("https://monitoring.googleapis.com/"),
 		internaloption.WithDefaultScopes(DefaultAuthScopes()...),
 		internaloption.EnableJwtWithScope(),
+		internaloption.EnableNewAuthLibrary(),
 		option.WithGRPCDialOption(grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(math.MaxInt32))),
 	}
@@ -214,6 +218,8 @@ type alertPolicyGRPCClient struct {
 
 	// The x-goog-* metadata to be sent with each request.
 	xGoogHeaders []string
+
+	logger *slog.Logger
 }
 
 // NewAlertPolicyClient creates a new alert policy service client based on gRPC.
@@ -248,6 +254,7 @@ func NewAlertPolicyClient(ctx context.Context, opts ...option.ClientOption) (*Al
 		connPool:          connPool,
 		alertPolicyClient: monitoringpb.NewAlertPolicyServiceClient(connPool),
 		CallOptions:       &client.CallOptions,
+		logger:            internaloption.GetLogger(opts),
 	}
 	c.setGoogleClientInfo()
 
@@ -270,7 +277,9 @@ func (c *alertPolicyGRPCClient) Connection() *grpc.ClientConn {
 func (c *alertPolicyGRPCClient) setGoogleClientInfo(keyval ...string) {
 	kv := append([]string{"gl-go", gax.GoVersion}, keyval...)
 	kv = append(kv, "gapic", getVersionClient(), "gax", gax.Version, "grpc", grpc.Version)
-	c.xGoogHeaders = []string{"x-goog-api-client", gax.XGoogHeader(kv...)}
+	c.xGoogHeaders = []string{
+		"x-goog-api-client", gax.XGoogHeader(kv...),
+	}
 }
 
 // Close closes the connection to the API service. The user should invoke this when
@@ -299,7 +308,7 @@ func (c *alertPolicyGRPCClient) ListAlertPolicies(ctx context.Context, req *moni
 		}
 		err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 			var err error
-			resp, err = c.alertPolicyClient.ListAlertPolicies(ctx, req, settings.GRPC...)
+			resp, err = executeRPC(ctx, c.alertPolicyClient.ListAlertPolicies, req, settings.GRPC, c.logger, "ListAlertPolicies")
 			return err
 		}, opts...)
 		if err != nil {
@@ -334,7 +343,7 @@ func (c *alertPolicyGRPCClient) GetAlertPolicy(ctx context.Context, req *monitor
 	var resp *monitoringpb.AlertPolicy
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
-		resp, err = c.alertPolicyClient.GetAlertPolicy(ctx, req, settings.GRPC...)
+		resp, err = executeRPC(ctx, c.alertPolicyClient.GetAlertPolicy, req, settings.GRPC, c.logger, "GetAlertPolicy")
 		return err
 	}, opts...)
 	if err != nil {
@@ -352,7 +361,7 @@ func (c *alertPolicyGRPCClient) CreateAlertPolicy(ctx context.Context, req *moni
 	var resp *monitoringpb.AlertPolicy
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
-		resp, err = c.alertPolicyClient.CreateAlertPolicy(ctx, req, settings.GRPC...)
+		resp, err = executeRPC(ctx, c.alertPolicyClient.CreateAlertPolicy, req, settings.GRPC, c.logger, "CreateAlertPolicy")
 		return err
 	}, opts...)
 	if err != nil {
@@ -369,7 +378,7 @@ func (c *alertPolicyGRPCClient) DeleteAlertPolicy(ctx context.Context, req *moni
 	opts = append((*c.CallOptions).DeleteAlertPolicy[0:len((*c.CallOptions).DeleteAlertPolicy):len((*c.CallOptions).DeleteAlertPolicy)], opts...)
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
-		_, err = c.alertPolicyClient.DeleteAlertPolicy(ctx, req, settings.GRPC...)
+		_, err = executeRPC(ctx, c.alertPolicyClient.DeleteAlertPolicy, req, settings.GRPC, c.logger, "DeleteAlertPolicy")
 		return err
 	}, opts...)
 	return err
@@ -384,58 +393,11 @@ func (c *alertPolicyGRPCClient) UpdateAlertPolicy(ctx context.Context, req *moni
 	var resp *monitoringpb.AlertPolicy
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
-		resp, err = c.alertPolicyClient.UpdateAlertPolicy(ctx, req, settings.GRPC...)
+		resp, err = executeRPC(ctx, c.alertPolicyClient.UpdateAlertPolicy, req, settings.GRPC, c.logger, "UpdateAlertPolicy")
 		return err
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return resp, nil
-}
-
-// AlertPolicyIterator manages a stream of *monitoringpb.AlertPolicy.
-type AlertPolicyIterator struct {
-	items    []*monitoringpb.AlertPolicy
-	pageInfo *iterator.PageInfo
-	nextFunc func() error
-
-	// Response is the raw response for the current page.
-	// It must be cast to the RPC response type.
-	// Calling Next() or InternalFetch() updates this value.
-	Response interface{}
-
-	// InternalFetch is for use by the Google Cloud Libraries only.
-	// It is not part of the stable interface of this package.
-	//
-	// InternalFetch returns results from a single call to the underlying RPC.
-	// The number of results is no greater than pageSize.
-	// If there are no more results, nextPageToken is empty and err is nil.
-	InternalFetch func(pageSize int, pageToken string) (results []*monitoringpb.AlertPolicy, nextPageToken string, err error)
-}
-
-// PageInfo supports pagination. See the google.golang.org/api/iterator package for details.
-func (it *AlertPolicyIterator) PageInfo() *iterator.PageInfo {
-	return it.pageInfo
-}
-
-// Next returns the next result. Its second return value is iterator.Done if there are no more
-// results. Once Next returns Done, all subsequent calls will return Done.
-func (it *AlertPolicyIterator) Next() (*monitoringpb.AlertPolicy, error) {
-	var item *monitoringpb.AlertPolicy
-	if err := it.nextFunc(); err != nil {
-		return item, err
-	}
-	item = it.items[0]
-	it.items = it.items[1:]
-	return item, nil
-}
-
-func (it *AlertPolicyIterator) bufLen() int {
-	return len(it.items)
-}
-
-func (it *AlertPolicyIterator) takeBuf() interface{} {
-	b := it.items
-	it.items = nil
-	return b
 }

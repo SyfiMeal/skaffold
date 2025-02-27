@@ -1438,12 +1438,23 @@ patchesStrategicMerge:
 
 resources:
 - ../../base
+
+components:
+- ../../components/label
 `, "overlays/dev/deployment.yaml": `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: skaffold-kustomize
   labels:
     env: dev # from-param: ${env2}
+`, "components/label/kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+labels:
+  - includeTemplates: true
+    includeSelectors: false
+    pairs:
+      region: 333a
 `}, expectedOut: `
 apiVersion: apps/v1
 kind: Deployment
@@ -1451,6 +1462,7 @@ metadata:
   labels:
     app: 111a
     env: 222a
+    region: 333a
   name: skaffold-kustomize-dev
 spec:
   selector:
@@ -1460,6 +1472,7 @@ spec:
     metadata:
       labels:
         app: skaffold-kustomize
+        region: 333a
     spec:
       containers:
       - image: skaffold-kustomize
@@ -1511,6 +1524,73 @@ spec:
 - op: add
   path: /metadata/annotations/example.com
   value: dummy
+`}, expectedOut: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: 111a
+  name: skaffold-kustomize
+  annotations:
+    example.com: dummy
+spec:
+  selector:
+    matchLabels:
+      app: skaffold-kustomize
+  template:
+    metadata:
+      labels:
+        app: skaffold-kustomize
+    spec:
+      containers:
+      - image: skaffold-kustomize
+        name: skaffold-kustomize
+`,
+		},
+		{
+			description: "kustomize parameterization success with inline patches",
+			args:        []string{"--offline", "--set", "app1=111a"},
+			config: `apiVersion: skaffold/v4beta2
+kind: Config
+metadata:
+  name: getting-started-kustomize
+manifests:
+  kustomize:
+    paths:
+    - base
+`, input: map[string]string{"base/kustomization.yaml": `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+patches:
+  - patch: |-
+      - op: add
+        path: /metadata/annotations/example.com
+        value: dummy
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: skaffold-kustomize
+resources:
+  - deployment.yaml
+`, "base/deployment.yaml": `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skaffold-kustomize
+  labels:
+    app: skaffold-kustomize # from-param: ${app1}
+spec:
+  selector:
+    matchLabels:
+      app: skaffold-kustomize
+  template:
+    metadata:
+      labels:
+        app: skaffold-kustomize
+    spec:
+      containers:
+      - name: skaffold-kustomize
+        image: skaffold-kustomize
 `}, expectedOut: `
 apiVersion: apps/v1
 kind: Deployment
@@ -2064,7 +2144,7 @@ metadata:
   labels:
     app1: after-change-1
     app2: before-change-2
-         
+
 spec:
   containers:
   - image: us-central1-docker.pkg.dev/k8s-skaffold/testing/multi-config-module1:customtag
@@ -2332,7 +2412,7 @@ spec:
 kind: Deployment
 metadata:
   name: my-nginx
-  annotations: 
+  annotations:
     color: orange
     fruit: apple
 spec:
@@ -2342,7 +2422,7 @@ spec:
       app: nginx
   template:
     metadata:
-      annotations: 
+      annotations:
         color: orange
         fruit: apple
       labels:
